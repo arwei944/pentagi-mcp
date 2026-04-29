@@ -3,8 +3,7 @@ name: Deploy to HF Spaces
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -20,18 +19,22 @@ jobs:
           for f in app.py mcp_server.py; do
             python3 -m py_compile "$f" 2>&1 || ERRORS=$((ERRORS + 1))
           done
-          [ $ERRORS -eq 0 ] && echo "OK" || exit 1
+          [ $ERRORS -eq 0 ] && echo "All checks passed" || exit 1
 
   deploy:
     needs: lint
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - name: Deploy to HF Spaces
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "ERROR: HF_TOKEN secret is not set. Please add it in Settings > Secrets > Actions"
+            exit 1
+          fi
           pip install huggingface_hub
           python3 << 'SCRIPT'
           import os
