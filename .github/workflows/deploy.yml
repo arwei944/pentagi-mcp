@@ -1,0 +1,51 @@
+name: Deploy to HF Spaces
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check Python syntax
+        run: |
+          ERRORS=0
+          for f in app.py mcp_server.py; do
+            python3 -m py_compile "$f" 2>&1 || ERRORS=$((ERRORS + 1))
+          done
+          [ $ERRORS -eq 0 ] && echo "OK" || exit 1
+
+  deploy:
+    needs: lint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to HF Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install huggingface_hub
+          python3 << 'SCRIPT'
+          import os
+          from huggingface_hub import HfApi, create_repo
+          token = os.environ["HF_TOKEN"]
+          repo_id = "arwei944/pentagi-mcp"
+          create_repo(repo_id=repo_id, repo_type="space", space_sdk="docker", exist_ok=True, token=token)
+          api = HfApi(token=token)
+          api.upload_folder(
+              folder_path=os.environ.get("GITHUB_WORKSPACE", "."),
+              repo_id=repo_id, repo_type="space",
+              commit_message=f"deploy: {__import__('datetime').datetime.utcnow().isoformat()}",
+              delete_patterns=["*.pyc", "__pycache__/*", ".github/*", ".gitignore"],
+              ignore_patterns=[".git/*", "__pycache__/*", "*.pyc", ".gitignore"],
+          )
+          print(f"Deployed to https://huggingface.co/spaces/{repo_id}")
+          SCRIPT
