@@ -1,6 +1,6 @@
 ---
 title: PentAGI MCP Server
-emoji: shield
+emoji: 🛡️
 colorFrom: red
 colorTo: orange
 sdk: docker
