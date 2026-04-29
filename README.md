@@ -1,8 +1,8 @@
 ---
 title: PentAGI MCP Server
-emoji: 🛡️
+emoji: "\U0001f6e1\ufe0f"
 colorFrom: red
-colorTo: yellow
+colorTo: pink
 sdk: docker
 app_port: 7860
 pinned: false
