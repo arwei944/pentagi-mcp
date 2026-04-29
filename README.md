@@ -1,6 +1,6 @@
 ---
 title: PentAGI MCP Server
-emoji: "\U0001f6e1\ufe0f"
+emoji: "🛡️"
 colorFrom: red
 colorTo: pink
 sdk: docker
@@ -23,10 +23,8 @@ AI-powered penetration testing system with MCP protocol.
 
 ## MCP Endpoints
 
-```
 SSE: http://<space-url>/sse
 Streamable HTTP: http://<space-url>/mcp
-```
 
 ## Disclaimer
 
