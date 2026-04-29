@@ -1,6 +1,6 @@
 ---
 title: PentAGI MCP Server
-emoji: "\U0001f6e1\ufe0f"
+emoji: shield
 colorFrom: red
 colorTo: orange
 sdk: docker
@@ -11,23 +11,23 @@ license: mit
 
 # PentAGI MCP Server
 
-AI 驱动的全自动渗透测试系统，基于 MCP 协议。
+AI-powered penetration testing system with MCP protocol.
 
-## 功能
+## Features
 
-- **侦察扫描**: Nmap、子域名枚举、目录爆破、Web 爬取
-- **漏洞扫描**: SQL 注入、XSS、Nuclei、CVE 查询
-- **漏洞利用**: Metasploit、暴力破解
-- **Agent 系统**: 多 Agent 协作、流程管理、报告生成
-- **记忆/情报**: 历史记忆、Web 搜索、网页抓取
+- Recon: Nmap, subdomain enum, dir brute, web crawl
+- Vuln Scan: SQL injection, XSS, Nuclei, CVE lookup
+- Exploit: Metasploit, brute force
+- Agent: Multi-agent collaboration, flow management
+- Intel: Memory search, web search, web scrape
 
-## MCP 连接
+## MCP Endpoints
 
 ```
 SSE: http://<space-url>/sse
 Streamable HTTP: http://<space-url>/mcp
 ```
 
-## 免责声明
+## Disclaimer
 
-所有渗透测试操作必须在授权范围内进行。
+All penetration testing operations must be authorized.
