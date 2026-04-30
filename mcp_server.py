@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s [
 logger = logging.getLogger("pentagi_mcp")
 
 @asynccontextmanager
-async def lifespan():
+async def lifespan(app):
     logger.info("PentAGI MCP Server starting...")
     yield
     logger.info("PentAGI MCP Server shutting down...")
@@ -159,17 +159,16 @@ async def handle_sse(request):
 async def handle_messages(request):
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
-app = Starlette(
-    routes=[
-        Route("/health", health_handler),
-        Route("/api/tools", tools_list_handler),
-        Route("/sse", handle_sse),
-        Route("/messages", handle_messages),
-        Mount("/mcp", app=mcp.streamable_http_app()),
-    ],
-)
+# Use FastMCP streamable_http_app as main app (it has /mcp route built-in)
+app = mcp.streamable_http_app()
 
-# 添加 CORS 中间件（兼容新旧版 Starlette）
+# Add custom routes
+app.add_route("/health", health_handler, methods=["GET"])
+app.add_route("/api/tools", tools_list_handler, methods=["GET"])
+app.add_route("/sse", handle_sse, methods=["GET", "POST"])
+app.add_route("/messages", handle_messages, methods=["GET", "POST"])
+
+# Add CORS middleware
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 if __name__ == "__main__":
