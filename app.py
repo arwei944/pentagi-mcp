@@ -22,7 +22,7 @@ PANEL_PORT = int(os.environ.get("PANEL_PORT", "7860"))
 
 TOOLS = {
     "recon": {
-        "label": "🔍 侦察扫描",
+        "label": "\U0001f50d 侦察扫描",
         "tools": {
             "pentagi_scan_ports": {"name": "Nmap 端口扫描", "desc": "扫描目标开放端口和服务", "params": ["target", "ports", "scan_type"]},
             "pentagi_enum_subdomains": {"name": "子域名枚举", "desc": "枚举目标域名子域名", "params": ["domain", "threads"]},
@@ -33,7 +33,7 @@ TOOLS = {
         }
     },
     "vuln": {
-        "label": "🎯 漏洞扫描",
+        "label": "\U0001f3af 漏洞扫描",
         "tools": {
             "pentagi_scan_sql_injection": {"name": "SQL 注入检测", "desc": "SQLMap 检测 SQL 注入", "params": ["target", "level", "risk"]},
             "pentagi_scan_xss": {"name": "XSS 检测", "desc": "XSS 漏洞扫描", "params": ["target", "params"]},
@@ -43,14 +43,14 @@ TOOLS = {
         }
     },
     "exploit": {
-        "label": "💥 漏洞利用",
+        "label": "\U0001f4a5 漏洞利用",
         "tools": {
             "pentagi_run_exploit": {"name": "执行 Exploit", "desc": "Metasploit/自定义 Exploit", "params": ["target", "exploit_type", "exploit_name"]},
             "pentagi_brute_force": {"name": "暴力破解", "desc": "密码暴力破解", "params": ["target", "service", "username"]},
         }
     },
     "agent": {
-        "label": "🤖 Agent 系统",
+        "label": "\U0001f916 Agent 系统",
         "tools": {
             "pentagi_create_flow": {"name": "创建流程", "desc": "创建渗透测试流程", "params": ["name", "description", "target", "agent_type"]},
             "pentagi_get_flow_status": {"name": "查询状态", "desc": "查询流程执行状态", "params": ["flow_id"]},
@@ -60,7 +60,7 @@ TOOLS = {
         }
     },
     "memory": {
-        "label": "🧠 记忆/情报",
+        "label": "\U0001f9e0 记忆/情报",
         "tools": {
             "pentagi_search_memory": {"name": "搜索记忆", "desc": "搜索历史经验", "params": ["query", "memory_type"]},
             "pentagi_web_search": {"name": "Web 搜索", "desc": "外部搜索引擎查询", "params": ["query", "engine"]},
@@ -91,12 +91,13 @@ def start_mcp_server():
             env={**os.environ, "MCP_TRANSPORT": "streamable_http", "MCP_PORT": str(MCP_SSE_PORT)},
         )
         # 等待 MCP 服务器真正就绪（轮询 health 端点，最多 60 秒）
+        import httpx as _httpx
         for i in range(30):
             if mcp_process.poll() is not None:
                 print(f"  MCP Server process exited with code {mcp_process.returncode}")
                 return False
             try:
-                resp = httpx.get(f"http://localhost:{MCP_SSE_PORT}/health", timeout=2)
+                resp = _httpx.get(f"http://localhost:{MCP_SSE_PORT}/health", timeout=2)
                 if resp.status_code == 200:
                     print(f"  MCP Server ready after {(i + 1) * 2}s")
                     return True
@@ -129,11 +130,11 @@ async def call_mcp_tool(tool_name: str, params: dict) -> str:
                     return "\n".join(item.get("text", "") for item in data["content"])
                 return json.dumps(data, indent=2, ensure_ascii=False)
             else:
-                return f"❌ 工具调用失败 (HTTP {response.status_code}): {response.text}"
+                return f"\u274c 工具调用失败 (HTTP {response.status_code}): {response.text}"
     except httpx.ConnectError:
-        return "❌ MCP Server 未启动，请等待服务初始化..."
+        return "\u274c MCP Server 未启动，请等待服务初始化..."
     except Exception as e:
-        return f"❌ 调用出错: {str(e)}"
+        return f"\u274c 调用出错: {str(e)}"
 
 def execute_tool(tool_name: str, **kwargs) -> str:
     params = {k: v for k, v in kwargs.items() if v and v != PARAM_DEFAULTS.get(k, "")}
@@ -181,7 +182,7 @@ def build_tool_ui(category_key: str, category_data: dict):
                         param_inputs[param] = inp
                         param_rows.append((param, row, inp))
             with gr.Column(scale=2):
-                run_btn = gr.Button("🚀 执行", variant="primary", size="lg")
+                run_btn = gr.Button("\U0001f680 执行", variant="primary", size="lg")
                 output = gr.Textbox(label="执行结果", lines=20, max_lines=50, interactive=False)
                 status = gr.Markdown("")
         def update_tool_ui(selected_tool):
@@ -208,13 +209,13 @@ def build_tool_ui(category_key: str, category_data: dict):
             for i, (param, _, _) in enumerate(param_rows):
                 if param in tool_params and i < len(values):
                     param_dict[param] = values[i]
-            status_md = f"⏳ 正在执行 `{selected_tool}` ..."
+            status_md = f"\u23f3 正在执行 `{selected_tool}` ..."
             yield status_md, ""
             result = execute_tool(selected_tool, **param_dict)
-            if result.startswith("❌"):
-                status_md = f"❌ `{selected_tool}` 执行失败"
+            if result.startswith("\u274c"):
+                status_md = f"\u274c `{selected_tool}` 执行失败"
             else:
-                status_md = f"✅ `{selected_tool}` 执行完成"
+                status_md = f"\u2705 `{selected_tool}` 执行完成"
             yield status_md, result
         all_param_components = [item[2] for item in param_rows]
         run_btn.click(
@@ -229,14 +230,14 @@ def build_tool_ui(category_key: str, category_data: dict):
 def create_app():
     with gr.Blocks(title="PentAGI MCP - AI 渗透测试系统") as app:
         gr.Markdown("""
-        # 🛡️ PentAGI MCP Server
+        # \U0001f6e1\ufe0f PentAGI MCP Server
         ### AI 驱动的全自动渗透测试系统 | 20+ 安全工具 | MCP 协议
-        > ⚠️ **所有渗透测试操作必须在授权范围内进行**
+        > \u26a0\ufe0f **所有渗透测试操作必须在授权范围内进行**
         """)
         with gr.Tabs():
             for cat_key, cat_data in TOOLS.items():
                 build_tool_ui(cat_key, cat_data)
-            with gr.Tab("⚙️ MCP 配置"):
+            with gr.Tab("\u2699\ufe0f MCP 配置"):
                 gr.Markdown("### MCP Server 连接信息")
                 with gr.Row():
                     with gr.Column():
@@ -245,18 +246,18 @@ def create_app():
                         gr.Markdown("### Trae / Claude Desktop 配置\n```json\n{\n  \"mcpServers\": {\n    \"pentagi\": {\n      \"url\": \"https://YOUR_HF_SPACE_URL/mcp\"\n    }\n  }\n}\n```")
                         gr.Markdown("### SSE 模式配置\n```json\n{\n  \"mcpServers\": {\n    \"pentagi\": {\n      \"url\": \"https://YOUR_HF_SPACE_URL/sse\"\n    }\n  }\n}\n```")
                 gr.Markdown("### 系统状态")
-                refresh_btn = gr.Button("🔄 刷新状态", size="sm")
+                refresh_btn = gr.Button("\U0001f504 刷新状态", size="sm")
                 sys_status = gr.Markdown("加载中...")
                 def get_system_status():
                     try:
                         resp = httpx.get(f"http://localhost:{MCP_SSE_PORT}/health", timeout=5)
                         if resp.status_code == 200:
-                            return f"✅ MCP Server 运行中\n\n{resp.text}"
+                            return f"\u2705 MCP Server 运行中\n\n{resp.text}"
                     except:
                         pass
-                    return "❌ MCP Server 未响应"
+                    return "\u274c MCP Server 未响应"
                 refresh_btn.click(fn=get_system_status, outputs=[sys_status])
-            with gr.Tab("📖 关于"):
+            with gr.Tab("\U0001f4d6 关于"):
                 gr.Markdown("## PentAGI MCP Server\n将 PentAGI 的全部渗透测试能力封装为 MCP 协议服务。\n### 许可证\nMIT License")
     return app
 
