@@ -1,31 +1,15 @@
----
-title: PentAGI MCP Server
-emoji: "\ud83d\udee1\ufe0f"
-colorFrom: red
-colorTo: pink
-sdk: docker
-app_port: 7860
-pinned: false
-license: mit
----
-
 # PentAGI MCP Server
 
 AI-powered penetration testing system with MCP protocol.
 
-## Features
+## v2.0 - Single Process Architecture
 
-- Recon: Nmap, subdomain enum, dir brute, web crawl
-- Vuln Scan: SQL injection, XSS, Nuclei, CVE lookup
-- Exploit: Metasploit, brute force
-- Agent: Multi-agent collaboration, flow management
-- Intel: Memory search, web search, web scrape
-
-## MCP Endpoints
-
-- Streamable HTTP: `/mcp`
-- SSE: `/sse`
+- No subprocess - MCP + Gradio + FastAPI in one process
+- No startup race condition
+- MCP Streamable HTTP: `/mcp`
+- MCP SSE: `/sse`
 - Health: `/health`
+- 21 penetration testing tools
 
 ## Disclaimer
 

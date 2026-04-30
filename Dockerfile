@@ -10,11 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl nmap &
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY app.py .
-COPY mcp_server.py .
 COPY README.md .
 ENV PYTHONUNBUFFERED=1
 ENV PANEL_PORT=7860
-ENV MCP_SSE_PORT=8765
 ENV PENTAGI_MODE=demo
 EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 CMD curl -f http://localhost:7860/health || exit 1
