@@ -393,12 +393,12 @@ def create_app():
 # MCP 路由转发中间件
 # ============================================================
 
-def setup_mcp_proxy(gradio_app):
-    """在 Gradio 的底层 FastAPI app 上挂载 MCP 代理路由"""
+def create_root_app(gradio_app):
+    """创建根 Starlette 应用，同时托管 Gradio 和 MCP 代理"""
+    from starlette.applications import Starlette
     from starlette.routing import Mount, Route
-    from starlette.responses import Response, StreamingResponse
     from starlette.types import Receive, Scope, Send
-    import functools
+    from starlette.middleware.cors import CORSMiddleware
 
     MCP_INTERNAL = f"http://localhost:{MCP_SSE_PORT}"
 
@@ -408,7 +408,6 @@ def setup_mcp_proxy(gradio_app):
         path = scope.get("path", "")
         query_string = scope.get("query_string", b"")
 
-        # 构建 headers dict
         headers_dict = {}
         for k, v in scope.get("headers", []):
             key = k.decode("latin-1").lower()
@@ -439,18 +438,13 @@ def setup_mcp_proxy(gradio_app):
                 else:
                     resp = await client.request(method, target_url, headers=headers_dict)
 
-                # SSE 流式响应
                 content_type = resp.headers.get("content-type", "")
                 if "text/event-stream" in content_type:
                     resp_headers = [
                         (k, v) for k, v in resp.headers.items()
                         if k.lower() not in ("content-encoding", "transfer-encoding")
                     ]
-                    await send({
-                        "type": "http.response.start",
-                        "status": resp.status_code,
-                        "headers": resp_headers,
-                    })
+                    await send({"type": "http.response.start", "status": resp.status_code, "headers": resp_headers})
                     async for chunk in resp.aiter_bytes():
                         await send({"type": "http.response.body", "body": chunk, "more_body": True})
                     await send({"type": "http.response.body", "body": b"", "more_body": False})
@@ -461,52 +455,33 @@ def setup_mcp_proxy(gradio_app):
                         if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")
                     ]
                     resp_headers.append(("content-length", str(len(response_body))))
-                    await send({
-                        "type": "http.response.start",
-                        "status": resp.status_code,
-                        "headers": resp_headers,
-                    })
+                    await send({"type": "http.response.start", "status": resp.status_code, "headers": resp_headers})
                     await send({"type": "http.response.body", "body": response_body})
 
         except httpx.ConnectError:
-            await send({
-                "type": "http.response.start",
-                "status": 502,
-                "headers": [("content-type", "application/json")],
-            })
-            await send({
-                "type": "http.response.body",
-                "body": json.dumps({"error": "MCP Server not ready"}).encode(),
-            })
+            await send({"type": "http.response.start", "status": 502, "headers": [("content-type", "application/json")]})
+            await send({"type": "http.response.body", "body": json.dumps({"error": "MCP Server not ready"}).encode()})
         except Exception as e:
-            await send({
-                "type": "http.response.start",
-                "status": 500,
-                "headers": [("content-type", "application/json")],
-            })
-            await send({
-                "type": "http.response.body",
-                "body": json.dumps({"error": str(e)}).encode(),
-            })
+            await send({"type": "http.response.start", "status": 500, "headers": [("content-type", "application/json")]})
+            await send({"type": "http.response.body", "body": json.dumps({"error": str(e)}).encode()})
 
-    # 直接在底层 app 上插入路由（优先于 Gradio 路由）
-    underlying_app = gradio_app.app
-    if hasattr(underlying_app, "routes"):
-        # 插入到路由列表最前面
-        mcp_routes = [
+    # 构建根应用：MCP 路由优先，其余交给 Gradio
+    root = Starlette(
+        routes=[
             Route("/mcp/{path:path}", proxy_handler, methods=["GET", "POST", "DELETE", "OPTIONS"]),
             Route("/mcp", proxy_handler, methods=["GET", "POST", "DELETE", "OPTIONS"]),
             Route("/sse", proxy_handler, methods=["GET", "POST"]),
             Route("/messages", proxy_handler, methods=["GET", "POST"]),
             Route("/health", proxy_handler, methods=["GET"]),
             Route("/api/tools", proxy_handler, methods=["GET"]),
-        ]
-        underlying_app.routes = mcp_routes + list(underlying_app.routes)
-        print(f"  ✅ MCP proxy routes inserted: {len(mcp_routes)} routes")
-    else:
-        print("  ⚠️ Could not access underlying app routes")
-
-    return gradio_app
+            # Gradio 挂载在根路径（catch-all）
+            Mount("/", app=gradio_app.app),
+        ],
+        middleware=[
+            CORSMiddleware(allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
+        ],
+    )
+    return root
 
 # ============================================================
 # 启动
@@ -525,26 +500,14 @@ if __name__ == "__main__":
     else:
         print(f"  ⚠️ MCP Server failed to start, running in demo mode")
     
-    # 启动 Gradio
-    print(f"[2/2] Starting Gradio Web UI on port {PANEL_PORT}...")
-    app = create_app()
-    app = setup_mcp_proxy(app)
-    print(f"  ✅ MCP proxy mounted: /mcp, /sse, /messages, /health, /api/tools -> localhost:{MCP_SSE_PORT}")
-    app.launch(
-        server_name="0.0.0.0",
-        server_port=PANEL_PORT,
-        show_error=True,
-        max_threads=10,
-        theme=gr.themes.Soft(
-            primary_hue="red",
-            secondary_hue="orange",
-        ),
-        css="""
-        .tool-desc { margin-bottom: 10px; padding: 8px; background: #f8f8f8; border-radius: 6px; }
-        footer { display: none !important; }
-        .contain { max-width: 1400px !important; }
-        """,
-    )
+    # 启动 Gradio + MCP 代理
+    print(f"[2/2] Starting Gradio Web UI + MCP Proxy on port {PANEL_PORT}...")
+    gradio_app = create_app()
+    root_app = create_root_app(gradio_app)
+    print(f"  ✅ MCP proxy: /mcp, /sse, /messages, /health, /api/tools -> localhost:{MCP_SSE_PORT}")
+
+    import uvicorn
+    uvicorn.run(root_app, host="0.0.0.0", port=PANEL_PORT, log_level="info")
     
     # 清理
     stop_mcp_server()
