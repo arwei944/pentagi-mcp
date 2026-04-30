@@ -419,7 +419,7 @@ def create_root_app(gradio_app):
             target_url += f"?{query_string.decode()}"
 
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
                 if method == "GET":
                     resp = await client.get(target_url, headers=headers_dict)
                 elif method == "POST":
@@ -465,6 +465,12 @@ def create_root_app(gradio_app):
             await send({"type": "http.response.start", "status": 500, "headers": [("content-type", "application/json")]})
             await send({"type": "http.response.body", "body": json.dumps({"error": str(e)}).encode()})
 
+    # 获取 Gradio 底层 ASGI app
+    try:
+        gradio_asgi = gradio_app.app
+    except AttributeError:
+        gradio_asgi = gradio_app
+
     # 构建根应用：MCP 路由优先，其余交给 Gradio
     root = Starlette(
         routes=[
@@ -475,7 +481,7 @@ def create_root_app(gradio_app):
             Route("/health", proxy_handler, methods=["GET"]),
             Route("/api/tools", proxy_handler, methods=["GET"]),
             # Gradio 挂载在根路径（catch-all）
-            Mount("/", app=gradio_app.app),
+            Mount("/", app=gradio_asgi),
         ],
         middleware=[
             CORSMiddleware(allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
