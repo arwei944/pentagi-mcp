@@ -90,7 +90,20 @@ def start_mcp_server():
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env={**os.environ, "MCP_TRANSPORT": "streamable_http", "MCP_PORT": str(MCP_SSE_PORT)},
         )
-        time.sleep(3)
+        # 等待 MCP 服务器真正就绪（轮询 health 端点，最多 60 秒）
+        for i in range(30):
+            if mcp_process.poll() is not None:
+                print(f"  MCP Server process exited with code {mcp_process.returncode}")
+                return False
+            try:
+                resp = httpx.get(f"http://localhost:{MCP_SSE_PORT}/health", timeout=2)
+                if resp.status_code == 200:
+                    print(f"  MCP Server ready after {(i + 1) * 2}s")
+                    return True
+            except Exception:
+                pass
+            time.sleep(2)
+        print("  MCP Server health check timeout (60s)")
         return mcp_process.poll() is None
     except Exception as e:
         print(f"[ERROR] Failed to start MCP server: {e}")
@@ -295,8 +308,8 @@ class MCPReverseProxy:
                         await send({"type": "http.response.body", "body": chunk, "more_body": True})
                     await send({"type": "http.response.body", "body": b"", "more_body": False})
         except httpx.ConnectError:
-            await send({"type": "http.response.start", "status": 502, "headers": [(b"content-type", b"application/json")]})
-            await send({"type": "http.response.body", "body": json.dumps({"error": "MCP Server not ready"}).encode()})
+            await send({"type": "http.response.start", "status": 503, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": json.dumps({"error": "MCP Server not ready, please retry in a few seconds"}).encode()})
         except Exception as e:
             await send({"type": "http.response.start", "status": 500, "headers": [(b"content-type", b"application/json")]})
             await send({"type": "http.response.body", "body": json.dumps({"error": str(e)}).encode()})
