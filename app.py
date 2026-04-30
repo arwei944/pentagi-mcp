@@ -1,5 +1,8 @@
 # PentAGI MCP Server - AI 驱动的全自动渗透测试系统
 # 部署在 HuggingFace Spaces (Docker + Gradio Web UI)
+#
+# 架构：MCP Server (8765) + Gradio UI 统一通过 FastAPI (7860) 对外暴露
+# 外部只需访问 7860 端口，/mcp /sse /health 等路径自动代理到内部 MCP Server
 
 import gradio as gr
 import json
@@ -12,18 +15,10 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
-# ============================================================
-# 配置
-# ============================================================
-
 PENTAGI_API_URL = os.environ.get("PENTAGI_API_URL", "http://localhost:8080")
 PENTAGI_API_KEY = os.environ.get("PENTAGI_API_KEY", "")
 MCP_SSE_PORT = int(os.environ.get("MCP_SSE_PORT", "8765"))
 PANEL_PORT = int(os.environ.get("PANEL_PORT", "7860"))
-
-# ============================================================
-# 工具定义
-# ============================================================
 
 TOOLS = {
     "recon": {
@@ -74,84 +69,45 @@ TOOLS = {
     },
 }
 
-# 参数默认值
 PARAM_DEFAULTS = {
-    "target": "",
-    "domain": "",
-    "ports": "1-10000",
-    "scan_type": "quick",
-    "threads": "10",
-    "extensions": "php,html,js,txt",
-    "depth": "2",
-    "max_pages": "50",
-    "level": "1",
-    "risk": "1",
-    "templates": "",
-    "severity": "critical,high,medium",
-    "scan_types": "port,vuln,web",
-    "intensity": "normal",
-    "cve_id": "",
-    "keyword": "",
-    "product": "",
-    "exploit_type": "metasploit",
-    "exploit_name": "",
-    "service": "ssh",
-    "username": "",
-    "name": "",
-    "description": "",
-    "agent_type": "auto",
-    "flow_id": "",
-    "message": "",
-    "status": "",
-    "memory_type": "",
-    "engine": "auto",
-    "url": "",
-    "extract_mode": "content",
+    "target": "", "domain": "", "ports": "1-10000", "scan_type": "quick",
+    "threads": "10", "extensions": "php,html,js,txt", "depth": "2", "max_pages": "50",
+    "level": "1", "risk": "1", "templates": "", "severity": "critical,high,medium",
+    "scan_types": "port,vuln,web", "intensity": "normal", "cve_id": "", "keyword": "",
+    "product": "", "exploit_type": "metasploit", "exploit_name": "", "service": "ssh",
+    "username": "", "name": "", "description": "", "agent_type": "auto",
+    "flow_id": "", "message": "", "status": "", "memory_type": "",
+    "engine": "auto", "url": "", "extract_mode": "content",
 }
-
-# ============================================================
-# MCP Server 进程管理
-# ============================================================
 
 mcp_process = None
 
 def start_mcp_server():
-    """启动 MCP SSE Server"""
     global mcp_process
     try:
         mcp_process = subprocess.Popen(
             ["python", "mcp_server.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env={**os.environ, "MCP_TRANSPORT": "streamable_http", "MCP_PORT": str(MCP_SSE_PORT)},
         )
-        time.sleep(2)
+        time.sleep(3)
         return mcp_process.poll() is None
     except Exception as e:
         print(f"[ERROR] Failed to start MCP server: {e}")
         return False
 
 def stop_mcp_server():
-    """停止 MCP Server"""
     global mcp_process
     if mcp_process:
         mcp_process.terminate()
         mcp_process = None
 
-# ============================================================
-# 工具执行函数
-# ============================================================
-
 async def call_mcp_tool(tool_name: str, params: dict) -> str:
-    """调用 MCP 工具"""
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(
                 f"http://localhost:{MCP_SSE_PORT}/mcp/tools/call",
-                json={
-                    "name": tool_name,
-                    "arguments": params,
-                },
+                json={"name": tool_name, "arguments": params},
                 headers={"Content-Type": "application/json"},
             )
             if response.status_code == 200:
@@ -167,7 +123,6 @@ async def call_mcp_tool(tool_name: str, params: dict) -> str:
         return f"❌ 调用出错: {str(e)}"
 
 def execute_tool(tool_name: str, **kwargs) -> str:
-    """同步执行工具（Gradio 回调用）"""
     params = {k: v for k, v in kwargs.items() if v and v != PARAM_DEFAULTS.get(k, "")}
     loop = asyncio.new_event_loop()
     try:
@@ -175,35 +130,20 @@ def execute_tool(tool_name: str, **kwargs) -> str:
     finally:
         loop.close()
 
-# ============================================================
-# Gradio UI 构建
-# ============================================================
-
 def build_tool_ui(category_key: str, category_data: dict):
-    """构建工具类别的 UI"""
     with gr.Tab(category_data["label"]) as tab:
         tool_names = list(category_data["tools"].keys())
-        
-        # 工具选择
         tool_selector = gr.Radio(
             choices=[(v["name"], k) for k, v in category_data["tools"].items()],
-            value=tool_names[0],
-            label="选择工具",
-            type="value",
+            value=tool_names[0], label="选择工具", type="value",
         )
-        
-        # 工具描述
         tool_desc = gr.Markdown("", elem_classes="tool-desc")
-        
-        # 参数输入区域
         param_inputs = {}
         with gr.Row():
             with gr.Column(scale=3):
-                # 动态参数区域 - 显示所有可能的参数
                 all_params = set()
                 for tool_info in category_data["tools"].values():
                     all_params.update(tool_info["params"])
-                
                 param_rows = []
                 for param in sorted(all_params):
                     with gr.Row(visible=False) as row:
@@ -222,25 +162,15 @@ def build_tool_ui(category_key: str, category_data: dict):
                         }
                         inp = gr.Textbox(
                             label=label_map.get(param, param),
-                            placeholder=PARAM_DEFAULTS.get(param, ""),
-                            value="",
+                            placeholder=PARAM_DEFAULTS.get(param, ""), value="",
                             lines=1 if param not in ("description", "message") else 3,
                         )
                         param_inputs[param] = inp
                         param_rows.append((param, row, inp))
-            
             with gr.Column(scale=2):
-                # 执行按钮和输出
                 run_btn = gr.Button("🚀 执行", variant="primary", size="lg")
-                output = gr.Textbox(
-                    label="执行结果",
-                    lines=20,
-                    max_lines=50,
-                    interactive=False,
-                )
+                output = gr.Textbox(label="执行结果", lines=20, max_lines=50, interactive=False)
                 status = gr.Markdown("")
-        
-        # 工具切换逻辑
         def update_tool_ui(selected_tool):
             tool_info = category_data["tools"].get(selected_tool, {})
             desc = f"**{tool_info.get('name', '')}** - {tool_info.get('desc', '')}"
@@ -254,14 +184,10 @@ def build_tool_ui(category_key: str, category_data: dict):
                 else:
                     updates.append(gr.Textbox(value=""))
             return updates
-        
         tool_selector.change(
-            fn=update_tool_ui,
-            inputs=[tool_selector],
+            fn=update_tool_ui, inputs=[tool_selector],
             outputs=[tool_desc] + [item for triple in param_rows for item in triple[1:]],
         )
-        
-        # 执行逻辑
         def run_selected_tool(selected_tool, *values):
             tool_info = category_data["tools"].get(selected_tool, {})
             tool_params = tool_info.get('params', [])
@@ -269,86 +195,45 @@ def build_tool_ui(category_key: str, category_data: dict):
             for i, (param, _, _) in enumerate(param_rows):
                 if param in tool_params and i < len(values):
                     param_dict[param] = values[i]
-            
             status_md = f"⏳ 正在执行 `{selected_tool}` ..."
             yield status_md, ""
-            
             result = execute_tool(selected_tool, **param_dict)
-            elapsed = ""
             if result.startswith("❌"):
                 status_md = f"❌ `{selected_tool}` 执行失败"
             else:
                 status_md = f"✅ `{selected_tool}` 执行完成"
             yield status_md, result
-        
-        # 绑定执行
         all_param_components = [item[2] for item in param_rows]
         run_btn.click(
-            fn=run_selected_tool,
-            inputs=[tool_selector] + all_param_components,
+            fn=run_selected_tool, inputs=[tool_selector] + all_param_components,
             outputs=[status, output],
         )
-        
-        # 初始化
         tab.select(
             fn=lambda: update_tool_ui(tool_names[0]),
             outputs=[tool_desc] + [item for triple in param_rows for item in triple[1:]],
         )
 
-# ============================================================
-# 主应用
-# ============================================================
-
 def create_app():
-    """创建 Gradio 应用"""
-    
-    with gr.Blocks(
-        title="PentAGI MCP - AI 渗透测试系统",
-    ) as app:
-        
-        # Header
+    with gr.Blocks(title="PentAGI MCP - AI 渗透测试系统") as app:
         gr.Markdown("""
         # 🛡️ PentAGI MCP Server
         ### AI 驱动的全自动渗透测试系统 | 20+ 安全工具 | MCP 协议
-        
         > ⚠️ **所有渗透测试操作必须在授权范围内进行**
         """)
-        
         with gr.Tabs():
-            # 工具标签页
             for cat_key, cat_data in TOOLS.items():
                 build_tool_ui(cat_key, cat_data)
-            
-            # MCP 配置页
             with gr.Tab("⚙️ MCP 配置"):
                 gr.Markdown("### MCP Server 连接信息")
                 with gr.Row():
                     with gr.Column():
-                        gr.Markdown(f"""
-                        **MCP SSE 端点**: `http://localhost:{MCP_SSE_PORT}/sse`
-                        
-                        **MCP Streamable HTTP**: `http://localhost:{MCP_SSE_PORT}/mcp`
-                        
-                        **工具数量**: 21 个
-                        """)
+                        gr.Markdown("**MCP Streamable HTTP**: `/mcp`\n\n**MCP SSE**: `/sse`\n\n**Health Check**: `/health`\n\n**工具数量**: 21 个")
                     with gr.Column():
-                        gr.Markdown("""
-                        ### Claude Desktop 配置
-                        ```json
-                        {
-                          "mcpServers": {
-                            "pentagi": {
-                              "url": "http://YOUR_HF_SPACE_URL/mcp"
-                              }
-                          }
-                        }
-                        ```
-                        """)
-                
+                        gr.Markdown("### Trae / Claude Desktop 配置\n```json\n{\n  \"mcpServers\": {\n    \"pentagi\": {\n      \"url\": \"https://YOUR_HF_SPACE_URL/mcp\"\n    }\n  }\n}\n```")
+                        gr.Markdown("### SSE 模式配置\n```json\n{\n  \"mcpServers\": {\n    \"pentagi\": {\n      \"url\": \"https://YOUR_HF_SPACE_URL/sse\"\n    }\n  }\n}\n```")
                 gr.Markdown("### 系统状态")
                 refresh_btn = gr.Button("🔄 刷新状态", size="sm")
                 sys_status = gr.Markdown("加载中...")
-                
                 def get_system_status():
                     try:
                         resp = httpx.get(f"http://localhost:{MCP_SSE_PORT}/health", timeout=5)
@@ -357,136 +242,89 @@ def create_app():
                     except:
                         pass
                     return "❌ MCP Server 未响应"
-                
                 refresh_btn.click(fn=get_system_status, outputs=[sys_status])
-            
-            # 关于页
             with gr.Tab("📖 关于"):
-                gr.Markdown("""
-                ## PentAGI MCP Server
-                
-                将 [PentAGI](https://github.com/vxcontrol/pentagi) 的全部渗透测试能力封装为 MCP 协议服务。
-                
-                ### 功能概览
-                
-                | 类别 | 工具数 | 说明 |
-                |------|--------|------|
-                | 🔍 侦察扫描 | 6 | Nmap、子域名枚举、目录爆破、Web 爬取 |
-                | 🎯 漏洞扫描 | 5 | SQL 注入、XSS、Nuclei、CVE 查询 |
-                | 💥 漏洞利用 | 2 | Metasploit、暴力破解 |
-                | 🤖 Agent 系统 | 5 | 多 Agent 协作、流程管理、报告生成 |
-                | 🧠 记忆/情报 | 3 | 历史记忆、Web 搜索、网页抓取 |
-                
-                ### 技术栈
-                - **后端**: Python + FastMCP
-                - **前端**: Gradio Web UI
-                - **部署**: Docker (HuggingFace Spaces)
-                - **协议**: MCP (Model Context Protocol)
-                
-                ### 许可证
-                MIT License - 仅供授权安全测试使用
-                """)
-    
+                gr.Markdown("## PentAGI MCP Server\n将 PentAGI 的全部渗透测试能力封装为 MCP 协议服务。\n### 许可证\nMIT License")
     return app
 
-# ============================================================
-# MCP 路由转发中间件
-# ============================================================
-# 启动
-# ============================================================
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("PentAGI MCP Server - Starting...")
-    print("=" * 60)
-    
-    # 启动 MCP Server
-    print("[1/2] Starting MCP SSE Server...")
-    mcp_started = start_mcp_server()
-    if mcp_started:
-        print(f"  ✅ MCP Server started on port {MCP_SSE_PORT}")
-    else:
-        print(f"  ⚠️ MCP Server failed to start, running in demo mode")
-    
-    # 启动 Gradio + MCP 代理
-    print(f"[2/2] Starting Gradio Web UI + MCP Proxy on port {PANEL_PORT}...")
-    gradio_app = create_app()
-
-    # 用 gr.mount_gradio_app 把 Gradio 挂到自定义 FastAPI 上
-    from fastapi import FastAPI
-    from starlette.routing import Mount, Route
-    from starlette.types import Receive, Scope, Send
-    from starlette.middleware.cors import CORSMiddleware
-
-    MCP_INTERNAL = f"http://localhost:{MCP_SSE_PORT}"
-
-    async def proxy_handler(scope: Scope, receive: Receive, send: Send):
-        method = scope.get("method", "GET").upper()
-        path = scope.get("path", "")
+class MCPReverseProxy:
+    """ASGI reverse proxy to internal MCP Server with streaming support."""
+    def __init__(self, internal_host: str, internal_port: int):
+        self.internal_host = internal_host
+        self.internal_port = internal_port
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await send({"type": "http.response.start", "status": 400, "headers": []})
+            await send({"type": "http.response.body", "body": b"Unsupported"})
+            return
+        method = scope["method"].upper()
+        path = scope["path"]
         query_string = scope.get("query_string", b"")
-        headers_dict = {}
+        target_url = f"http://{self.internal_host}:{self.internal_port}{path}"
+        if query_string:
+            target_url += f"?{query_string.decode('ascii', errors='ignore')}"
+        req_headers = {}
         for k, v in scope.get("headers", []):
             key = k.decode("latin-1").lower()
-            if key not in ("host", "content-length"):
-                headers_dict[key] = v.decode("latin-1")
-        target_url = f"{MCP_INTERNAL}{path}"
-        if query_string:
-            target_url += f"?{query_string.decode()}"
+            if key not in ("host", "content-length", "transfer-encoding"):
+                req_headers[k.decode("latin-1")] = v.decode("latin-1")
+        body_parts = []
+        while True:
+            msg = await receive()
+            if msg["type"] == "http.request":
+                body_parts.append(msg.get("body", b""))
+                if not msg.get("more_body", False):
+                    break
+            else:
+                break
+        req_body = b"".join(body_parts) if body_parts else None
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
-                if method == "GET":
-                    resp = await client.get(target_url, headers=headers_dict)
-                elif method == "POST":
-                    body_parts = []
-                    while True:
-                        msg = await receive()
-                        body_parts.append(msg.get("body", b""))
-                        if not msg.get("more_body", False):
-                            break
-                    body = b"".join(body_parts)
-                    resp = await client.post(target_url, headers=headers_dict, content=body)
-                elif method == "DELETE":
-                    resp = await client.delete(target_url, headers=headers_dict)
-                elif method == "OPTIONS":
-                    resp = await client.options(target_url, headers=headers_dict)
-                else:
-                    resp = await client.request(method, target_url, headers=headers_dict)
-                response_body = resp.content
-                resp_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")]
-                resp_headers.append(("content-length", str(len(response_body))))
-                await send({"type": "http.response.start", "status": resp.status_code, "headers": resp_headers})
-                await send({"type": "http.response.body", "body": response_body})
+            timeout = httpx.Timeout(300.0, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    method=method, url=target_url,
+                    headers=req_headers, content=req_body,
+                ) as response:
+                    resp_headers = []
+                    for k, v in response.headers.items():
+                        kl = k.lower()
+                        if kl not in ("content-encoding", "transfer-encoding", "content-length"):
+                            resp_headers.append((k.encode(), v.encode()))
+                    await send({"type": "http.response.start", "status": response.status_code, "headers": resp_headers})
+                    async for chunk in response.aiter_bytes():
+                        await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                    await send({"type": "http.response.body", "body": b"", "more_body": False})
         except httpx.ConnectError:
-            await send({"type": "http.response.start", "status": 502, "headers": [("content-type", "application/json")]})
+            await send({"type": "http.response.start", "status": 502, "headers": [(b"content-type", b"application/json")]})
             await send({"type": "http.response.body", "body": json.dumps({"error": "MCP Server not ready"}).encode()})
         except Exception as e:
-            await send({"type": "http.response.start", "status": 500, "headers": [("content-type", "application/json")]})
+            await send({"type": "http.response.start", "status": 500, "headers": [(b"content-type", b"application/json")]})
             await send({"type": "http.response.body", "body": json.dumps({"error": str(e)}).encode()})
 
-    # 创建 FastAPI app 并挂载 Gradio
+if __name__ == "__main__":
+    print("PentAGI MCP Server - Starting...")
+    print(f"[1/2] Starting MCP Server on internal port {MCP_SSE_PORT}...")
+    mcp_started = start_mcp_server()
+    if mcp_started:
+        print(f"  MCP Server started on port {MCP_SSE_PORT}")
+    else:
+        print(f"  MCP Server failed to start")
+    print(f"[2/2] Starting unified entry on port {PANEL_PORT}...")
+    from fastapi import FastAPI
+    from starlette.middleware.cors import CORSMiddleware
+    mcp_proxy = MCPReverseProxy("127.0.0.1", MCP_SSE_PORT)
     fastapi_app = FastAPI()
     fastapi_app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-    # MCP 代理路由处理函数
-    async def mcp_proxy_route(request):
-        return await proxy_handler(request.scope, request.receive, request._send)
-
-    # 添加 MCP 代理路由到 FastAPI（必须在 Gradio mount 之前注册）
-    fastapi_app.add_api_route("/mcp/{path:path}", mcp_proxy_route, methods=["GET", "POST", "DELETE", "OPTIONS"], include_in_schema=False)
-    fastapi_app.add_api_route("/mcp", mcp_proxy_route, methods=["GET", "POST", "DELETE", "OPTIONS"], include_in_schema=False)
-    fastapi_app.add_api_route("/sse", mcp_proxy_route, methods=["GET", "POST"], include_in_schema=False)
-    fastapi_app.add_api_route("/messages", mcp_proxy_route, methods=["GET", "POST"], include_in_schema=False)
-    fastapi_app.add_api_route("/health", mcp_proxy_route, methods=["GET"], include_in_schema=False)
-    fastapi_app.add_api_route("/api/tools", mcp_proxy_route, methods=["GET"], include_in_schema=False)
-
-    # 用 gr.mount_gradio_app 挂载 Gradio
+    fastapi_app.mount("/mcp", mcp_proxy)
+    fastapi_app.add_route("/sse", mcp_proxy, methods=["GET", "POST"])
+    fastapi_app.add_route("/messages", mcp_proxy, methods=["GET", "POST"])
+    fastapi_app.add_route("/health", mcp_proxy, methods=["GET"])
+    fastapi_app.add_route("/api/tools", mcp_proxy, methods=["GET"])
+    gradio_app = create_app()
     gradio_app = gr.mount_gradio_app(fastapi_app, gradio_app, path="/")
-
-    print(f"  ✅ MCP proxy routes added to FastAPI")
-    print(f"  ✅ Gradio mounted at /")
-
+    print(f"  MCP proxy: /mcp, /sse, /messages, /health, /api/tools")
+    print(f"  Gradio mounted at /")
+    print(f"  All on port {PANEL_PORT}")
     import uvicorn
     uvicorn.run(fastapi_app, host="0.0.0.0", port=PANEL_PORT, log_level="info")
-    
-    # 清理
     stop_mcp_server()
