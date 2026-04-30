@@ -167,10 +167,12 @@ app = Starlette(
         Route("/messages", handle_messages),
         Mount("/mcp", app=mcp.streamable_http_app()),
     ],
-    middleware=[CORSMiddleware(allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])],
 )
+
+# 添加 CORS 中间件（兼容新旧版 Starlette）
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("MCP_SSE_PORT", "8765"))
+    port = int(os.environ.get("MCP_SSE_PORT", os.environ.get("MCP_PORT", "8765")))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
