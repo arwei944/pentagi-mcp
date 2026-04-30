@@ -19,6 +19,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
+from mcp.server.transport_security import TransportSecuritySettings
 
 # ============================================================
 # 配置
@@ -51,7 +52,10 @@ async def mcp_lifespan(app):
 mcp = FastMCP(
     "pentagi_mcp",
     lifespan=mcp_lifespan,
-    instructions="PentAGI - AI Penetration Testing System with 21 security tools"
+    instructions="PentAGI - AI Penetration Testing System with 21 security tools",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
 )
 
 # ============================================================
