@@ -390,6 +390,125 @@ def create_app():
     return app
 
 # ============================================================
+# MCP 路由转发中间件
+# ============================================================
+
+def setup_mcp_proxy(gradio_app):
+    """在 Gradio 的底层 FastAPI/Starlette app 上挂载 MCP 代理路由"""
+    from starlette.routing import Mount, Route
+    from starlette.responses import Response, StreamingResponse
+    from starlette.types import Receive, Scope, Send
+
+    MCP_INTERNAL = f"http://localhost:{MCP_SSE_PORT}"
+    # 需要转发到 MCP Server 的路径前缀
+    MCP_ROUTES = {"/mcp", "/sse", "/messages", "/health", "/api/tools"}
+
+    @gradio_app.app.add_middleware
+    class MCPProxyMiddleware:
+        """将 MCP 相关请求转发到内部 MCP Server"""
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send):
+            path = scope.get("path", "")
+            # 判断是否为 MCP 路由
+            if any(path == p or path.startswith(p + "/") for p in MCP_ROUTES):
+                await self._proxy_request(scope, receive, send)
+            else:
+                await self.app(scope, receive, send)
+
+        async def _proxy_request(self, scope: Scope, receive: Receive, send: Send):
+            """转发请求到内部 MCP Server"""
+            method = scope.get("method", "GET").upper()
+            path = scope.get("path", "")
+            headers = dict(scope.get("headers", []))
+            # 将 header list 转为 dict（bytes key -> bytes value）
+            headers_dict = {}
+            for k, v in headers:
+                headers_dict[k.decode()] = v.decode()
+            # 移除 host header，让 httpx 自动设置
+            headers_dict.pop("host", None)
+
+            target_url = f"{MCP_INTERNAL}{path}"
+
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+                    if method == "GET":
+                        resp = await client.get(target_url, headers=headers_dict)
+                    elif method == "POST":
+                        body_parts = []
+                        while True:
+                            msg = await receive()
+                            body_parts.append(msg.get("body", b""))
+                            if not msg.get("more_body", False):
+                                break
+                        body = b"".join(body_parts)
+                        resp = await client.post(target_url, headers=headers_dict, content=body)
+                    elif method == "DELETE":
+                        resp = await client.delete(target_url, headers=headers_dict)
+                    elif method == "OPTIONS":
+                        resp = await client.options(target_url, headers=headers_dict)
+                    else:
+                        resp = await client.request(method, target_url, headers=headers_dict)
+
+                    # 处理 SSE 流式响应
+                    content_type = resp.headers.get("content-type", "")
+                    if "text/event-stream" in content_type:
+                        await send({
+                            "type": "http.response.start",
+                            "status": resp.status_code,
+                            "headers": [
+                                [k.encode(), v.encode()]
+                                for k, v in resp.headers.items()
+                                if k.lower() not in ("content-encoding", "transfer-encoding")
+                            ],
+                        })
+                        async for chunk in resp.aiter_bytes():
+                            await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                        await send({"type": "http.response.body", "body": b"", "more_body": False})
+                    else:
+                        response_body = resp.content
+                        resp_headers = [
+                            [k.encode(), v.encode()]
+                            for k, v in resp.headers.items()
+                            if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")
+                        ]
+                        resp_headers.append([b"content-length", str(len(response_body)).encode()])
+                        await send({
+                            "type": "http.response.start",
+                            "status": resp.status_code,
+                            "headers": resp_headers,
+                        })
+                        await send({
+                            "type": "http.response.body",
+                            "body": response_body,
+                        })
+
+            except httpx.ConnectError:
+                await send({
+                    "type": "http.response.start",
+                    "status": 502,
+                    "headers": [[b"content-type", b"application/json"]],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": json.dumps({"error": "MCP Server not ready"}).encode(),
+                })
+            except Exception as e:
+                await send({
+                    "type": "http.response.start",
+                    "status": 500,
+                    "headers": [[b"content-type", b"application/json"]],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": json.dumps({"error": str(e)}).encode(),
+                })
+
+    return gradio_app
+
+# ============================================================
 # 启动
 # ============================================================
 
@@ -409,6 +528,8 @@ if __name__ == "__main__":
     # 启动 Gradio
     print(f"[2/2] Starting Gradio Web UI on port {PANEL_PORT}...")
     app = create_app()
+    app = setup_mcp_proxy(app)
+    print(f"  ✅ MCP proxy mounted: /mcp, /sse, /messages, /health, /api/tools -> localhost:{MCP_SSE_PORT}")
     app.launch(
         server_name="0.0.0.0",
         server_port=PANEL_PORT,
